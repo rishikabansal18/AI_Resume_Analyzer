@@ -1,134 +1,112 @@
-from flask import Flask, request, jsonify, send_from_directory
-import os
+from flask import Flask, request, jsonify, render_template
+import pdfplumber
+import re
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+app = Flask(__name__)
 
-from utils.parser import extract_text
-from utils.skills import extract_skills
-from services.gap import skill_gap
-from models.ann_model import train_model, predict_score
-
-app = Flask(__name__, static_folder="static")
-
-# 🔥 Train ANN model once
-model = train_model()
-
+# 📄 Extract text
+def extract_text(file):
+    text = ""
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() or ""
+    return text.lower()
 
 # ✅ Resume validation
-def is_resume(text):
-    text = text.lower()
+def is_valid_resume(text):
     keywords = ["education", "experience", "skills", "projects"]
-    return sum(k in text for k in keywords) >= 2
+    return sum(1 for k in keywords if k in text) >= 2
+
+# 🔍 Skill match
+def skill_match(skill, text):
+    return re.search(r"\b" + re.escape(skill) + r"\b", text) is not None
+
+# 🧠 Domain-aware role → skills
+def get_expected_skills(role):
+    role = role.lower()
+
+    if "electrical" in role:
+        return ["circuit design", "matlab", "electronics", "power systems"]
+
+    if "embedded" in role:
+        return ["c", "microcontroller", "embedded systems", "arduino"]
+
+    if "electronics" in role:
+        return ["embedded systems", "verilog", "vhdl", "fpga"]
+
+    if "mechanical" in role:
+        return ["cad", "solidworks", "thermodynamics"]
+
+    if "civil" in role:
+        return ["autocad", "construction", "structural analysis"]
+
+    if "ai" in role or "ml" in role:
+        return ["python", "machine learning", "deep learning", "tensorflow"]
+
+    if "data" in role:
+        return ["python", "sql", "data analysis", "pandas"]
+
+    if "web" in role:
+        return ["html", "css", "javascript", "react"]
+
+    if "project engineer" in role:
+        return ["project management", "coordination", "technical documentation"]
+
+    return ["communication", "teamwork", "problem solving"]
 
 
-# ✅ Lightweight similarity (NO heavy models)
-def get_similarity(text1, text2):
-    vectorizer = TfidfVectorizer()
-    vectors = vectorizer.fit_transform([text1, text2])
-    return cosine_similarity(vectors[0], vectors[1])[0][0]
-
-
-# ✅ Role expansion (custom roles supported)
-def expand_role(text):
-    mapping = {
-        "data scientist": "python pandas machine learning sql",
-        "web developer": "html css javascript react nodejs",
-        "software developer": "python java sql",
-        "teacher": "communication teaching classroom management",
-        "manager": "leadership communication planning",
-        "cybersecurity": "network security linux cryptography"
-    }
-    return mapping.get(text.lower().strip(), text)
-
-
-# ✅ Skill weighting
-IMPORTANT = {"python", "sql", "machine learning", "communication"}
-
-
-def weighted_score(matched, total):
-    if total == 0:
-        return 0
-    score = sum(2 if s in IMPORTANT else 1 for s in matched)
-    return round((score / (total * 2)) * 100, 2)
-
-
-# ✅ Feedback system
-def feedback(score):
-    if score > 70:
-        return "🔥 Strong profile"
-    elif score > 40:
-        return "👍 Average profile"
-    else:
-        return "⚠️ Needs improvement"
-
-
-# 🔥 Home route
 @app.route("/")
 def home():
-    return send_from_directory("static", "index.html")
+    return render_template("index.html")
 
 
-# 🚀 MAIN ANALYZE API
 @app.route("/analyze", methods=["POST"])
 def analyze():
     try:
         file = request.files.get("resume")
-        role = request.form.get("role")
-        job_desc = request.form.get("job_desc")
+        role_input = request.form.get("job_desc")
 
-        if not file:
-            return jsonify({"error": "Upload resume"}), 400
+        if not file or not role_input:
+            return jsonify({"error": "Upload resume and enter job role"})
 
-        # Save file temporarily
-        path = "temp.pdf"
-        file.save(path)
+        text = extract_text(file)
 
-        # Extract text
-        text = extract_text(path)
+        if not is_valid_resume(text):
+            return jsonify({"error": "This does not look like a resume"})
 
-        # Validate resume
-        if not is_resume(text):
-            os.remove(path)
-            return jsonify({"error": "⚠️ Upload a valid resume"}), 400
+        expected_skills = get_expected_skills(role_input)
 
-        # Expand role
-        job_desc = expand_role(job_desc)
+        matched = [s for s in expected_skills if skill_match(s, text)]
+        missing = [s for s in expected_skills if s not in matched]
 
-        # Extract skills
-        user_skills = extract_skills(text)
-        job_skills = extract_skills(job_desc)
+        score = int((len(matched) / len(expected_skills)) * 100)
 
-        # Similarity
-        similarity = get_similarity(text, job_desc)
+        # 🎯 feedback
+        if score == 0:
+            feedback = "No match ❌"
+        elif score >= 75:
+            feedback = "Excellent match 🎯"
+        elif score >= 50:
+            feedback = "Good match 👍"
+        elif score >= 30:
+            feedback = "Average ⚠️"
+        else:
+            feedback = "Needs improvement ❌"
 
-        # Skill gap
-        matched, missing = skill_gap(user_skills, job_skills)
-
-        # Rule-based score
-        rule_score = weighted_score(matched, len(job_skills))
-
-        # ANN score
-        ratio = len(matched) / len(job_skills) if job_skills else 0
-        ann_score = predict_score(model, similarity, ratio)
-
-        # Cleanup
-        os.remove(path)
+        # 💡 strength insight
+        strength = "Strong" if score >= 70 else "Moderate" if score >= 40 else "Weak"
 
         return jsonify({
-            "role": job_desc,
+            "score": score,
             "matched_skills": matched,
             "missing_skills": missing,
-            "similarity": round(similarity, 3),
-            "rule_score": rule_score,
-            "ann_score": round(ann_score * 100, 2),
-            "feedback": feedback(ann_score * 100)
+            "feedback": feedback,
+            "strength": strength
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)})
 
 
-# 🚀 RUN APP
 if __name__ == "__main__":
-    app.run()
+    app.run(debug=True)

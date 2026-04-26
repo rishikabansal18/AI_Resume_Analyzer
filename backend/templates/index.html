@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>AI Resume Analyzer</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body {
+    font-family: 'Segoe UI';
+    background: linear-gradient(to right, #dfe9f3, #ffffff);
+    display:flex;
+    justify-content:center;
+    padding:30px;
+}
+
+.container { width:900px; }
+
+.card {
+    background:white;
+    padding:20px;
+    border-radius:12px;
+    box-shadow:0 8px 20px rgba(0,0,0,0.1);
+    margin-bottom:20px;
+    transition:0.3s;
+}
+
+.card:hover { transform: scale(1.02); }
+
+input {
+    width:100%;
+    padding:10px;
+    margin-top:10px;
+}
+
+button {
+    padding:10px 20px;
+    margin-top:10px;
+    background:#4CAF50;
+    color:white;
+    border:none;
+    cursor:pointer;
+    border-radius:6px;
+}
+
+.progress {
+    height:20px;
+    background:#eee;
+    border-radius:10px;
+}
+.progress-bar {
+    height:100%;
+    width:0%;
+    background:#4CAF50;
+    border-radius:10px;
+    transition:1s;
+}
+
+.flex { display:flex; gap:20px; }
+.flex .card { flex:1; }
+
+.loading {
+    display:none;
+    color:#555;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="card">
+<h2>🚀 AI Resume Analyzer</h2>
+
+<input type="file" id="fileInput">
+
+<input list="roles" id="role" placeholder="Type role...">
+<datalist id="roles">
+<option value="AI Engineer">
+<option value="Data Engineer">
+<option value="Web Developer">
+<option value="Embedded Engineer">
+<option value="Electrical Engineer">
+<option value="Mechanical Engineer">
+<option value="Civil Engineer">
+<option value="Project Engineer">
+</datalist>
+
+<button onclick="analyze()">Analyze</button>
+<p id="loading" class="loading">Analyzing... ⏳</p>
+</div>
+
+<div class="card">
+<h3 id="score"></h3>
+<p id="scoreDesc"></p>
+<p id="feedback"></p>
+<p id="strength"></p>
+
+<div class="progress">
+<div id="bar" class="progress-bar"></div>
+</div>
+</div>
+
+<div class="flex">
+<div class="card">
+<h3>Matched Skills</h3>
+<p id="matched"></p>
+</div>
+
+<div class="card">
+<h3>Missing Skills</h3>
+<p id="missing"></p>
+</div>
+</div>
+
+<div class="card">
+<h3>Resume Improvement Tips</h3>
+<ul id="tips"></ul>
+</div>
+
+<div class="card">
+<canvas id="chart1"></canvas>
+<canvas id="chart2"></canvas>
+</div>
+
+</div>
+
+<script>
+
+let c1,c2;
+
+function analyze(){
+
+let file=document.getElementById("fileInput").files[0];
+let role=document.getElementById("role").value;
+
+if(!file){
+alert("Upload resume");
+return;
+}
+
+document.getElementById("loading").style.display="block";
+
+let fd=new FormData();
+fd.append("resume",file);
+fd.append("job_desc",role);
+
+fetch("/analyze",{method:"POST",body:fd})
+.then(r=>r.json())
+.then(data=>{
+
+document.getElementById("loading").style.display="none";
+
+if(data.error){
+document.getElementById("feedback").innerText=data.error;
+document.getElementById("feedback").style.color="red";
+return;
+}
+
+document.getElementById("score").innerText="Score: "+data.score;
+document.getElementById("feedback").innerText=data.feedback;
+document.getElementById("strength").innerText="Resume Strength: "+data.strength;
+
+// score explanation
+if(data.score >= 75){
+document.getElementById("scoreDesc").innerText="Strong match";
+}
+else if(data.score >= 50){
+document.getElementById("scoreDesc").innerText="Moderate match";
+}
+else if(data.score > 0){
+document.getElementById("scoreDesc").innerText="Low match";
+}
+else{
+document.getElementById("scoreDesc").innerText="No matching skills";
+}
+
+// progress
+let bar=document.getElementById("bar");
+bar.style.width="0%";
+setTimeout(()=>{ bar.style.width=data.score+"%"; },100);
+
+// skills
+document.getElementById("matched").innerHTML=
+data.matched_skills.map(s=>`<span style="color:green">${s}</span>`).join(", ") || "None";
+
+document.getElementById("missing").innerHTML=
+data.missing_skills.map(s=>`<span style="color:red">${s}</span>`).join(", ") || "None";
+
+// tips
+let tips=[];
+if(data.missing_skills.length){
+tips.push("Learn: "+data.missing_skills.join(", "));
+}
+tips.push("Add relevant projects");
+tips.push("Use action verbs");
+tips.push("Add measurable achievements");
+
+let ul=document.getElementById("tips");
+ul.innerHTML="";
+tips.forEach(t=>{
+let li=document.createElement("li");
+li.innerText=t;
+ul.appendChild(li);
+});
+
+// charts
+if(c1) c1.destroy();
+if(c2) c2.destroy();
+
+c1=new Chart(document.getElementById("chart1"),{
+type:"bar",
+data:{labels:["Score"],datasets:[{data:[data.score]}]}
+});
+
+c2=new Chart(document.getElementById("chart2"),{
+type:"pie",
+data:{
+labels:["Matched","Missing"],
+datasets:[{
+data:[
+data.matched_skills.length,
+data.missing_skills.length
+]
+}]
+}
+});
+
+});
+}
+</script>
+
+</body>
+</html>
