@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>AI Resume Analyzer</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body {
+    font-family: 'Segoe UI';
+    background: linear-gradient(to right, #eef2f3, #dfe9f3);
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    min-height:100vh;
+}
+
+.container {
+    background:white;
+    padding:25px;
+    width:650px;
+    border-radius:12px;
+    box-shadow:0 10px 25px rgba(0,0,0,0.1);
+    position: relative;
+}
+
+input, textarea {
+    width:95%;
+    padding:10px;
+    margin:10px 0;
+    border-radius:6px;
+    border:1px solid #ccc;
+}
+
+button {
+    background:#007bff;
+    color:white;
+    padding:10px;
+    border:none;
+    border-radius:6px;
+    cursor:pointer;
+    margin-right:10px;
+}
+
+.result {
+    margin-top:20px;
+}
+
+.best {
+    color:green;
+    font-weight:bold;
+}
+
+/* 🔥 AUTOCOMPLETE */
+.suggestions {
+    position:absolute;
+    background:white;
+    border:1px solid #ccc;
+    width:90%;
+    max-height:150px;
+    overflow-y:auto;
+    text-align:left;
+    z-index:1000;
+}
+
+.suggestion-item {
+    padding:8px;
+    cursor:pointer;
+}
+
+.suggestion-item:hover {
+    background:#f0f0f0;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h2>🚀 AI Resume Analyzer</h2>
+
+<input type="file" id="fileInput">
+
+<input type="text" id="jobRoleInput"
+placeholder="Enter roles separated by comma (e.g. manager, teacher, data scientist)"
+oninput="showSuggestions()">
+
+<div id="suggestions" class="suggestions"></div>
+
+<button onclick="analyzeSingle()">Analyze</button>
+<button onclick="compareRoles()">Compare Roles</button>
+
+<div class="result" id="result"></div>
+
+<canvas id="chart1"></canvas>
+<canvas id="chart2"></canvas>
+
+</div>
+
+<script>
+
+let chart1, chart2;
+
+// 🔥 ROLE LIST
+const rolesList = [
+    "Data Scientist",
+    "Data Analyst",
+    "Machine Learning Engineer",
+    "Web Developer",
+    "Frontend Developer",
+    "Backend Developer",
+    "Software Developer",
+    "Cybersecurity",
+    "DevOps Engineer",
+    "Teacher",
+    "HR",
+    "Manager"
+];
+
+// 🔥 AUTOCOMPLETE FUNCTION
+function showSuggestions() {
+    let input = document.getElementById("jobRoleInput").value.toLowerCase();
+    let box = document.getElementById("suggestions");
+
+    box.innerHTML = "";
+
+    if (!input) return;
+
+    let filtered = rolesList.filter(role =>
+        role.toLowerCase().includes(input)
+    );
+
+    filtered.forEach(role => {
+        let div = document.createElement("div");
+        div.classList.add("suggestion-item");
+        div.innerText = role;
+
+        div.onclick = () => {
+            document.getElementById("jobRoleInput").value = role;
+            box.innerHTML = "";
+        };
+
+        box.appendChild(div);
+    });
+}
+
+// 🚀 SINGLE ANALYSIS
+async function analyzeSingle(){
+    let data = await sendRequest();
+
+    if(data.error){
+        showError(data.error);
+        return;
+    }
+
+    showResult(data);
+    drawCharts(data);
+}
+
+// 🚀 MULTI ROLE COMPARISON
+async function compareRoles(){
+
+    let input = document.getElementById("jobRoleInput").value.trim();
+
+    if(!input){
+        alert("Enter at least one role!");
+        return;
+    }
+
+    let roles = input.split(",").map(r => r.trim());
+
+    let scores = [];
+    let resultsHTML = "";
+
+    for(let r of roles){
+
+        let data = await sendRequest(r);
+
+        if(data.error){
+            showError(data.error);
+            return;
+        }
+
+        scores.push(data.ann_score);
+
+        let learn = data.missing_skills.length
+            ? "Learn: " + data.missing_skills.join(", ")
+            : "Great match 🎯";
+
+        // 🔥 show each role result
+        resultsHTML += `
+            <div style="margin-bottom:15px; padding:10px; border-bottom:1px solid #ddd;">
+                <b>Role:</b> ${r}<br>
+                <b>Score:</b> ${data.ann_score}<br>
+                <b>Similarity:</b> ${data.similarity}<br>
+                <b>Matched:</b> ${data.matched_skills.join(", ") || "None"}<br>
+                <b>Missing:</b> ${data.missing_skills.join(", ") || "None"}<br>
+                <b>${data.feedback}</b><br>
+                <b>${learn}</b>
+            </div>
+        `;
+    }
+
+    let bestIndex = scores.indexOf(Math.max(...scores));
+
+    document.getElementById("result").innerHTML = `
+        <p class="best">🏆 Best Role: ${roles[bestIndex]}</p>
+        ${resultsHTML}
+    `;
+
+    // 🔥 Chart stays
+    if(chart1) chart1.destroy();
+
+    chart1 = new Chart(document.getElementById("chart1"),{
+        type:"bar",
+        data:{
+            labels: roles,
+            datasets:[{
+                label:"Score",
+                data: scores
+            }]
+        }
+    });
+}
+
+// 🔧 SEND REQUEST
+async function sendRequest(roleInput=null){
+
+    let file=document.getElementById("fileInput").files[0];
+
+    if(!file){
+        alert("Upload resume first!");
+        return {error:"No file"};
+    }
+
+    let role = roleInput || document.getElementById("jobRoleInput").value;
+
+    let fd=new FormData();
+    fd.append("resume",file);
+    fd.append("role","other");
+    fd.append("job_desc",role);
+
+    let res=await fetch("/analyze",{method:"POST",body:fd});
+    return await res.json();
+}
+
+// 🎯 RESULT
+function showResult(data){
+
+    let learn = data.missing_skills.length
+        ? "You should learn: " + data.missing_skills.join(", ")
+        : "Great match 🎯";
+
+    document.getElementById("result").innerHTML = `
+        <p><b>Score:</b> ${data.ann_score}</p>
+        <p><b>Similarity:</b> ${data.similarity}</p>
+
+        <p><b>Matched:</b> ${data.matched_skills.join(", ") || "None"}</p>
+
+        <p style="color:red;">
+            <b>Missing:</b> ${data.missing_skills.join(", ") || "None"}
+        </p>
+
+        <p><b>${data.feedback}</b></p>
+        <p><b>${learn}</b></p>
+    `;
+}
+
+// 📊 CHARTS
+function drawCharts(data){
+
+    if(chart1) chart1.destroy();
+    if(chart2) chart2.destroy();
+
+    chart1 = new Chart(document.getElementById("chart1"),{
+        type:"bar",
+        data:{
+            labels:["Score"],
+            datasets:[{
+                label:"ANN Score",
+                data:[data.ann_score]
+            }]
+        }
+    });
+
+    chart2 = new Chart(document.getElementById("chart2"),{
+        type:"pie",
+        data:{
+            labels:["Matched","Missing"],
+            datasets:[{
+                data:[
+                    data.matched_skills.length,
+                    data.missing_skills.length
+                ]
+            }]
+        }
+    });
+}
+
+// ❌ ERROR
+function showError(msg){
+    document.getElementById("result").innerHTML =
+        `<p style="color:red">${msg}</p>`;
+}
+
+</script>
+
+</body>
+</html>
